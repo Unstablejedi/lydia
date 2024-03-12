@@ -1,0 +1,202 @@
+using Giraffe.DianaAPI.Configurations;
+using Giraffe.DianaAPI.Interfaces;
+using Giraffe.DianaAPI.Model;
+using Giraffe.RCP.Interfaces;
+using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Giraffe.DianaAPI
+{
+    public class DianaAPIImplementation : IDianaAPIInterface
+    {
+        private readonly DianaAPIConfiguration _configuration;
+        private readonly IDianaAPIToken _dianaAPIToken;
+        private readonly IRCPServices _rcpServices;
+
+        public DianaAPIImplementation(IOptions<DianaAPIConfiguration> options,
+            IRCPServices rcpServices,
+            IDianaAPIToken dianaAPI)
+        {
+            _configuration = options.Value;
+            _dianaAPIToken = dianaAPI;
+            _rcpServices = rcpServices;
+        }
+
+        public async Task<IEnumerable<ApproverOrgUnitsDataObject>> GetApproverOrgUnitsAsync(string utCode, string asOfDate)
+        {
+            return (await this.RequestAsync<DianaRootobject<ApproverOrgUnitsDataObject>>($"GetApproverOrgUnits?date={asOfDate}&loggedinuser={utCode}"))?.Elements;
+        }
+
+        public async Task<IEnumerable<OrgUnitHierarchyDataObject>> GetOrgUnitHierarchyAsync()
+        {
+            return (await this.RequestAsync<DianaRootobject<OrgUnitHierarchyDataObject>>($"GetOrgUnitHierarchy"))?.Elements;
+        }
+
+        public async Task<IEnumerable<OrgUnitMembersDataObject>> GetOrgUnitMembersAsync(long? orgUnitNo, string asOfDate)
+        {
+            return (await this.RequestAsync<DianaRootobject<OrgUnitMembersDataObject>>($"GetOrgUnitMembers?organizationunitno={ orgUnitNo }&asofdate={ asOfDate }"))?.Elements;
+        }
+
+
+        public async Task<IEnumerable<UserOrgUnitDataObject>> GetUserOrgUnitAsync(string utCode, string asOfDate)
+        {
+            //return (await this.RequestAsync<DianaRootobject<UserOrgUnitDataObject>>($"GetUserOrgUnit?date={asOfDate}&loggedinuser={ utCode.Trim().ToUpper()}"))?.Elements;
+            return (await this.RequestAsync<DianaRootobject<UserOrgUnitDataObject>>($"GetUserOrgUnitBasedOnManualMapping?userutcode={utCode.Trim().ToUpper()}&asofdate={asOfDate}"))?.Elements;
+        }
+
+        public async Task<IEnumerable<UserInformationDataObject>> GetUserInformationAsync()
+        {
+            try
+            {
+                List<UserInformationDataObject> result = new List<UserInformationDataObject>();
+                var allCMITeam = (await this.GetOrgUnitHierarchyAsync())
+                        .Where(s => (s.organizationunitname.Contains("CMI") || s.organizationunitname.Contains("GITJPN"))
+                                    && s.isalive == true
+                                    && !s.organizationunitname.Contains("ITS")).ToList();
+
+
+                var asOfDate = DateTime.Now.AddDays(-7).ToString("yyyy-MM-dd");
+                List<int> invalidList = new List<int>();
+
+                #region Parallel
+                //var task = allCMITeam.Take(15).Select(async team =>
+                //{
+                //    var unitMember = await this.GetOrgUnitMembersAsync(team.organizationunitno, asOfDate);
+                //    if (unitMember != null)
+                //        result.AddRange(unitMember.Select(s =>
+                //        {
+                //            //var approverRCP = _rcpServices.GetPersonByUTCodeAsync(s.timesheetapproverutcode.Trim()).GetAwaiter().GetResult();
+                //            //var userRCP = _rcpServices.GetPersonByUTCodeAsync(s.userutcode.Trim()).GetAwaiter().GetResult();
+                //            return new UserInformationDataObject
+                //            {
+                //                OrganizationUnitShortname = team.shortname,
+                //                OrganizationUnitName = team.organizationunitname,
+                //                ParentOrganizationUnitName = team.parentorganizationunitname,
+                //                ParentOrganizationUnitNo = team.parentorganizationunitno,
+                //                ParentOrganizationUnitShortname = string.Empty,
+                //                UserCountryName = s.budgetreportingentitycode,
+                //                //UserEmail = userRCP.Email,
+                //                UserFirstName = s.firstname,
+                //                UserLastName = s.lastname,
+                //                UserUTCode = s.userutcode,
+                //                OrganizationUnitNo = team.organizationunitno,
+                //                OrganizationUnitCalendar = string.Empty,
+                //                ProjectCode = string.Empty,
+                //                ProjectName = string.Empty,
+                //                //RegularApproverEmail = approverRCP.Email,
+                //                //RegularApproverFirstName = approverRCP.FirstName,
+                //                //RegularApproverLastName = approverRCP.LastName,
+                //                RegularApproverUtcode = s.timesheetapproverutcode,
+                //                TimesheetEntryDetailsCalendarDate = string.Empty,
+                //                UserContractType = string.Empty,
+                //                WorkpackageName = string.Empty
+                //            };
+                //        }));
+                //});
+                //await Task.WhenAll(task); 
+                #endregion
+
+                foreach (var team in allCMITeam)
+                {
+                    IEnumerable<OrgUnitMembersDataObject> unitMember = null;
+                    try
+                    {
+                        unitMember = await this.GetOrgUnitMembersAsync(team.organizationunitno, asOfDate);
+                        if (unitMember != null)
+                            result.AddRange(unitMember.Select(s =>
+                            {
+                                var approverRCP = _rcpServices.GetPersonByUTCodeAsync(s.timesheetapproverutcode.Trim()).GetAwaiter().GetResult();
+                                var userRCP = _rcpServices.GetPersonByUTCodeAsync(s.userutcode.Trim()).GetAwaiter().GetResult();
+                                return new UserInformationDataObject
+                                {
+                                    OrganizationUnitShortname = team.shortname,
+                                    OrganizationUnitName = team.organizationunitname,
+                                    ParentOrganizationUnitName = team.parentorganizationunitname,
+                                    ParentOrganizationUnitNo = team.parentorganizationunitno,
+                                    ParentOrganizationUnitShortname = string.Empty,
+                                    UserCountryName = s.budgetreportingentitycode,
+                                    UserEmail = userRCP.Email,
+                                    UserFirstName = s.firstname,
+                                    UserLastName = s.lastname,
+                                    UserUTCode = s.userutcode,
+                                    OrganizationUnitNo = team.organizationunitno,
+                                    OrganizationUnitCalendar = string.Empty,
+                                    ProjectCode = string.Empty,
+                                    ProjectName = string.Empty,
+                                    RegularApproverEmail = approverRCP.Email,
+                                    RegularApproverFirstName = approverRCP.FirstName,
+                                    RegularApproverLastName = approverRCP.LastName,
+                                    RegularApproverUtcode = s.timesheetapproverutcode,
+                                    TimesheetEntryDetailsCalendarDate = string.Empty,
+                                    UserContractType = string.Empty,
+                                    WorkpackageName = string.Empty,
+                                    ErrorMessage = string.Empty
+                                };
+                            }));
+                    }
+                    catch (Exception)
+                    {
+                        invalidList.Add(team.organizationunitno);
+                        result.Add(new UserInformationDataObject()
+                        {
+                            OrganizationUnitShortname = team.shortname,
+                            OrganizationUnitName = team.organizationunitname,
+                            ParentOrganizationUnitName = team.parentorganizationunitname,
+                            ParentOrganizationUnitNo = team.parentorganizationunitno,
+                            ParentOrganizationUnitShortname = string.Empty,
+                            UserCountryName = String.Empty,
+                            UserEmail = String.Empty,
+                            UserFirstName = String.Empty,
+                            UserLastName = String.Empty,
+                            UserUTCode = String.Empty,
+                            OrganizationUnitNo = team.organizationunitno,
+                            OrganizationUnitCalendar = string.Empty,
+                            ProjectCode = string.Empty,
+                            ProjectName = string.Empty,
+                            RegularApproverEmail = String.Empty,
+                            RegularApproverFirstName = String.Empty,
+                            RegularApproverLastName = String.Empty,
+                            RegularApproverUtcode = String.Empty,
+                            TimesheetEntryDetailsCalendarDate = string.Empty,
+                            UserContractType = string.Empty,
+                            WorkpackageName = string.Empty,
+                            ErrorMessage = "Error in retrieving team details."
+                        });
+                    }
+                }
+                return result;
+            }
+            catch (Exception)
+            {
+                return new List<UserInformationDataObject>();
+            }
+        }
+        private async Task<T> RequestAsync<T>(string url) where T : class
+        {
+            var request = new HttpRequestMessage
+            {
+                Method = HttpMethod.Get,
+                RequestUri = new Uri($"{ _configuration.DianaUrl }/{ _configuration.DianaAPIVersion }/{url}"),
+            };
+            //request.Headers.Add("Accept", "application/json");
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer { _dianaAPIToken.AccessToken }");
+
+            var response = await new HttpClient().SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            var responseJsonContent = await response.Content.ReadAsStringAsync();
+
+
+            if (responseJsonContent.Contains("No results found. Please check the parameters and try again."))
+                return null;
+            else
+                return JsonConvert.DeserializeObject<T>(responseJsonContent);
+        }
+    }
+}
+
