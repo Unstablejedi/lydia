@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RptDataSource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" Name="EFIRA_DQM">
+  <ConnectionProperties>
+    <Extension>SQL</Extension>
+    <ConnectString>Data Source=EMAPPA1871DEV\IS_MBIMUT01_DEV;Initial Catalog=DQM_CPL_DMT</ConnectString>
+    <IntegratedSecurity>true</IntegratedSecurity>
+  </ConnectionProperties>
+  <DataSourceID>c82be29f-e273-4c6a-b5a9-29ad2e0258b5</DataSourceID>
+</RptDataSource>
